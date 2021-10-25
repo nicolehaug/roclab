@@ -1,0 +1,51 @@
+pipeline {
+    agent {
+        node {
+            label 'linuxworker1'
+        }
+    }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        ansiColor('xterm')
+        buildDiscarder(logRotator(numToKeepStr: '50'))
+    }
+
+    environment {
+        AWS_ACCESS_KEY_ID           = credentials('deploy_aws_research_nonprod_access_key_id')
+        AWS_SECRET_ACCESS_KEY       = credentials('deploy_aws_research_nonprod_secret_access_key')
+    }
+
+    stages {
+    
+        stage('Provision Infrastructure') {
+            steps {
+                script {
+                    def tfHome = tool name: 'TF_0.13.5'
+
+                    env.PATH = "${tfHome}:${env.PATH}"
+                    // Do not destroy Dynamo table until all other Terraform resources are destroyed
+                    dir ('research/dev/locking') {
+                        sh '''
+                            rm -rf .terraform
+                            terraform init -backend-config "bucket=fs-state-nonprod-vdr"
+
+                            terraform plan -input=false -var-file=../nonprod.tfvars
+                            terraform apply -auto-approve -var-file=../nonprod.tfvars
+                        '''
+                    }
+                    dir ('research/dev') {
+                        sh '''
+                            rm -rf .terraform
+                            terraform init -backend-config "bucket=fs-state-nonprod-vdr"
+                            
+                            terraform plan -input=false -var-file=nonprod.tfvars
+                            terraform apply -auto-approve -var-file=nonprod.tfvars
+                        '''
+                    }                 
+                }                
+            }
+        }
+    }
+}
